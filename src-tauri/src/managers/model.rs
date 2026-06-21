@@ -35,6 +35,8 @@ pub enum EngineType {
     GigaAM,
     Canary,
     Cohere,
+    /// Remote ChatGPT/Codex transcription API. Has no local model file.
+    Codex,
 }
 
 /// Where a model comes from and how Handy obtains it — the routing discriminant
@@ -1052,6 +1054,36 @@ impl ModelManager {
         // find. Additive — see `seed_catalog_models`.
         Self::seed_catalog_models(&mut available_models);
 
+        // Remote Codex Dictation model. Backed by the ChatGPT backend transcribe
+        // API and authenticated with the local Codex CLI credentials, so there is
+        // nothing to download — it is always "available" (no local file).
+        available_models.insert(
+            "codex-dictation".to_string(),
+            ModelInfo {
+                id: "codex-dictation".to_string(),
+                name: "Codex Dictation".to_string(),
+                description: "Cloud transcription via ChatGPT. Requires Codex CLI login."
+                    .to_string(),
+                filename: String::new(),
+                source: ModelSource::Local,
+                size_mb: 0,
+                is_downloaded: true,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::Codex,
+                accuracy_score: 0.0,
+                speed_score: 0.0,
+                supports_translation: false,
+                is_recommended: false,
+                supported_languages: vec![], // empty = any language allowed
+                supports_language_selection: true,
+                is_custom: false,
+                supports_streaming: false,
+                supports_language_detection: true,
+            },
+        );
+
         // Auto-discover custom transcribe-cpp models (.bin / .gguf) in the models directory
         if let Err(e) = Self::discover_custom_transcribe_models(&models_dir, &mut available_models)
         {
@@ -1306,6 +1338,13 @@ impl ModelManager {
         let mut models = self.available_models.lock().unwrap();
 
         for model in models.values_mut() {
+            // Remote engines have no local file; they are always available.
+            if matches!(model.engine_type, EngineType::Codex) {
+                model.is_downloaded = true;
+                model.is_downloading = false;
+                model.partial_size = 0;
+                continue;
+            }
             if let ModelSource::HuggingFace { repo_id, revision } = &model.source {
                 model.is_downloaded = hf_cached_path(repo_id, revision, &model.filename).is_some();
                 model.is_downloading = false;
@@ -1391,10 +1430,13 @@ impl ModelManager {
         // If no model is selected, pick the first downloaded one using the same
         // ranked order the UI receives.
         if settings.selected_model.is_empty() {
+            // Skip remote engines (e.g. Codex) when auto-selecting: they require
+            // external credentials, so they shouldn't become the default on a
+            // fresh install just because they report as "downloaded".
             if let Some(available_model) = self
                 .get_available_models()
                 .into_iter()
-                .find(|model| model.is_downloaded)
+                .find(|model| model.is_downloaded && !matches!(model.engine_type, EngineType::Codex))
             {
                 info!(
                     "Auto-selecting model: {} ({})",

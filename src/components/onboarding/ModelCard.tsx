@@ -94,12 +94,16 @@ const ModelCard: React.FC<ModelCardProps> = ({
   const isFeatured = variant === "featured";
   const isClickable =
     status === "available" || status === "active" || status === "downloadable";
+  // Remote engines (e.g. Codex) have no local file: nothing to download, size,
+  // or delete.
+  const isRemote = model.engine_type === "Codex";
 
   // Get translated model name and description
   const displayName = getTranslatedModelName(model, t);
   const displayDescription = getTranslatedModelDescription(model, t);
   const showModelSize =
-    status === "downloadable" || status === "available" || status === "active";
+    !isRemote &&
+    (status === "downloadable" || status === "available" || status === "active");
   const formattedModelSize = formatModelSize(Number(model.size_mb));
   const quantLabel = getQuantLabel(model.filename);
   const capabilityLanguages = getUniqueCapabilityLanguages(
@@ -267,7 +271,7 @@ const ModelCard: React.FC<ModelCardProps> = ({
             {quantLabel && <span className="text-text/40">{quantLabel}</span>}
           </span>
         )}
-        {onDelete && (status === "available" || status === "active") && (
+        {onDelete && !isRemote && (status === "available" || status === "active") && (
           <Button
             variant="ghost"
             size="sm"
