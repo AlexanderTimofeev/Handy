@@ -38,6 +38,16 @@ pub enum EngineType {
     Cohere,
     /// Remote ChatGPT/Codex transcription API. Has no local model file.
     Codex,
+    /// Remote Groq hosted Whisper API. Has no local model file.
+    Groq,
+}
+
+impl EngineType {
+    /// Remote engines transcribe over HTTP and have no local model file, so
+    /// they are always "available" and are never auto-selected.
+    pub fn is_remote(&self) -> bool {
+        matches!(self, EngineType::Codex | EngineType::Groq)
+    }
 }
 
 /// Where a model comes from and how Handy obtains it — the routing discriminant
@@ -1143,6 +1153,49 @@ impl ModelManager {
             },
         );
 
+        // Remote Groq Whisper models. Backed by Groq's hosted OpenAI-compatible
+        // transcription API; the user supplies a per-model API key. Nothing to
+        // download. The model id is `groq-<groq model name>` so the engine can
+        // derive the API model by stripping the `groq-` prefix.
+        for (id, name, description) in [
+            (
+                "groq-whisper-large-v3-turbo",
+                "Groq Whisper Large v3 Turbo",
+                "Cloud transcription via Groq. Fast. Requires a Groq API key.",
+            ),
+            (
+                "groq-whisper-large-v3",
+                "Groq Whisper Large v3",
+                "Cloud transcription via Groq. Most accurate. Requires a Groq API key.",
+            ),
+        ] {
+            available_models.insert(
+                id.to_string(),
+                ModelInfo {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    description: description.to_string(),
+                    filename: String::new(),
+                    source: ModelSource::Local,
+                    size_mb: 0,
+                    is_downloaded: true,
+                    is_downloading: false,
+                    partial_size: 0,
+                    is_directory: false,
+                    engine_type: EngineType::Groq,
+                    accuracy_score: 0.0,
+                    speed_score: 0.0,
+                    supports_translation: false,
+                    is_recommended: false,
+                    supported_languages: vec![], // empty = any language allowed
+                    supports_language_selection: true,
+                    is_custom: false,
+                    supports_streaming: false,
+                    supports_language_detection: true,
+                },
+            );
+        }
+
         // Auto-discover custom transcribe-cpp models (.bin / .gguf) in the models directory
         if let Err(e) = Self::discover_custom_transcribe_models(&models_dir, &mut available_models)
         {
@@ -1403,7 +1456,7 @@ impl ModelManager {
 
         for model in models.values_mut() {
             // Remote engines have no local file; they are always available.
-            if matches!(model.engine_type, EngineType::Codex) {
+            if model.engine_type.is_remote() {
                 model.is_downloaded = true;
                 model.is_downloading = false;
                 model.partial_size = 0;
@@ -1552,7 +1605,7 @@ impl ModelManager {
             if let Some(available_model) = self
                 .get_available_models()
                 .into_iter()
-                .find(|model| model.is_downloaded && !matches!(model.engine_type, EngineType::Codex))
+                .find(|model| model.is_downloaded && !model.engine_type.is_remote())
             {
                 info!(
                     "Auto-selecting model: {} ({})",

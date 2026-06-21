@@ -1,5 +1,7 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { commands } from "@/bindings";
+import { useSettings } from "@/hooks/useSettings";
 import {
   AudioLines,
   Check,
@@ -53,6 +55,68 @@ const getQuantLabel = (filename: string): string | null => {
   return match ? match[1].toUpperCase() : null;
 };
 
+// Per-model API key editor for remote models that need one (e.g. Groq).
+// Reads/writes `remote_api_keys[modelId]`. Clicks are stopped from bubbling so
+// editing the key does not select/activate the surrounding card.
+const RemoteApiKeyInput: React.FC<{ modelId: string }> = ({ modelId }) => {
+  const { settings, refreshSettings } = useSettings();
+  const stored = settings?.remote_api_keys?.[modelId] ?? "";
+  const [value, setValue] = useState(stored);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setValue(stored);
+  }, [stored]);
+
+  const dirty = value.trim() !== stored;
+  const hasKey = stored.length > 0;
+
+  const handleSave = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSaving(true);
+    try {
+      await commands.changeRemoteApiKeySetting(modelId, value.trim());
+      await refreshSettings();
+    } catch (err) {
+      console.error(`Failed to save API key for ${modelId}:`, err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="flex items-center gap-2 w-full mt-1"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <input
+        type="password"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="API key"
+        autoComplete="off"
+        spellCheck={false}
+        className="flex-1 min-w-0 px-2 py-1 text-xs bg-mid-gray/10 border border-mid-gray/40 rounded-md focus:outline-none focus:ring-1 focus:ring-logo-primary"
+      />
+      {hasKey && !dirty && (
+        <span className="flex items-center gap-1 text-xs text-green-500 whitespace-nowrap">
+          <Check className="w-3.5 h-3.5" />
+          Saved
+        </span>
+      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={handleSave}
+        disabled={!dirty || saving}
+      >
+        {saving ? "Saving…" : "Save"}
+      </Button>
+    </div>
+  );
+};
+
 export type ModelCardStatus =
   | "downloadable"
   | "downloading"
@@ -98,9 +162,12 @@ const ModelCard: React.FC<ModelCardProps> = ({
   const isFeatured = variant === "featured";
   const isClickable =
     status === "available" || status === "active" || status === "downloadable";
-  // Remote engines (e.g. Codex) have no local file: nothing to download, size,
-  // or delete.
-  const isRemote = model.engine_type === "Codex";
+  // Remote engines (Codex, Groq) have no local file: nothing to download,
+  // size, or delete.
+  const isRemote =
+    model.engine_type === "Codex" || model.engine_type === "Groq";
+  // Groq models need a user-supplied API key, set per model on the card.
+  const needsApiKey = model.engine_type === "Groq";
 
   // Get translated model name and description
   const displayName = getTranslatedModelName(model, t);
@@ -290,6 +357,9 @@ const ModelCard: React.FC<ModelCardProps> = ({
           </Button>
         )}
       </div>
+
+      {/* Per-model API key (Groq) */}
+      {needsApiKey && <RemoteApiKeyInput modelId={model.id} />}
 
       {/* Download/extract progress */}
       {status === "downloading" && downloadProgress !== undefined && (
