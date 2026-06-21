@@ -195,12 +195,25 @@ impl CodexEngine {
         let config = Self::build_curl_config(&auth, &wav_arg, &language);
 
         let result = (|| -> Result<String> {
-            let mut child = Command::new("curl")
+            let mut command = Command::new("curl");
+            command
                 .arg("-K")
                 .arg("-")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            // Hide the curl console window on Windows. Without CREATE_NO_WINDOW a
+            // console flashes on every transcription and steals focus from the
+            // app the user is dictating into.
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                command.creation_flags(CREATE_NO_WINDOW);
+            }
+
+            let mut child = command
                 .spawn()
                 .map_err(|e| anyhow!("Failed to run curl (is it installed?): {}", e))?;
 
