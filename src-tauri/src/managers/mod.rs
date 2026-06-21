@@ -1,7 +1,9 @@
 pub mod audio;
 pub mod codex;
 pub mod gguf_meta;
+pub mod groq;
 pub mod history;
+pub mod remote;
 pub mod model;
 pub mod model_capabilities;
 pub mod transcription;

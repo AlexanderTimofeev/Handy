@@ -1,6 +1,7 @@
 use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::codex::CodexEngine;
+use crate::managers::groq::GroqEngine;
 use crate::managers::model::{EngineType, ModelManager};
 use crate::settings::{
     get_settings, AppSettings, ModelUnloadTimeout, OrtAcceleratorSetting,
@@ -170,6 +171,7 @@ enum LoadedEngine {
     Canary(CanaryModel),
     Cohere(CohereModel),
     Codex(CodexEngine),
+    Groq(GroqEngine),
 }
 
 /// RAII guard that clears the `is_loading` flag and notifies waiters on drop.
@@ -527,10 +529,33 @@ impl TranscriptionManager {
 
         // Remote engines have no local model file; skip path resolution and
         // construct the client directly.
-        if matches!(model_info.engine_type, EngineType::Codex) {
+        if model_info.engine_type.is_remote() {
+            let loaded_engine = match model_info.engine_type {
+                EngineType::Codex => LoadedEngine::Codex(CodexEngine::new()),
+                EngineType::Groq => {
+                    let settings = get_settings(&self.app_handle);
+                    let api_key = settings
+                        .remote_api_keys
+                        .get(model_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    if api_key.trim().is_empty() {
+                        let error_msg = "Groq API key not set for this model";
+                        emit_loading_failed(error_msg);
+                        return Err(anyhow::anyhow!(error_msg));
+                    }
+                    // Model id is `groq-<groq model name>`.
+                    let groq_model = model_id
+                        .strip_prefix("groq-")
+                        .unwrap_or(model_id)
+                        .to_string();
+                    LoadedEngine::Groq(GroqEngine::new(groq_model, api_key))
+                }
+                _ => unreachable!("non-remote engine in remote branch"),
+            };
             {
                 let mut engine = self.lock_engine();
-                *engine = Some(LoadedEngine::Codex(CodexEngine::new()));
+                *engine = Some(loaded_engine);
             }
             {
                 let mut current_model = self.current_model_id.lock().unwrap();
@@ -546,7 +571,7 @@ impl TranscriptionManager {
                     error: None,
                 },
             );
-            debug!("Loaded remote Codex transcription engine: {}", model_id);
+            debug!("Loaded remote transcription engine: {}", model_id);
             return Ok(());
         }
 
@@ -686,7 +711,9 @@ impl TranscriptionManager {
                 })?;
                 LoadedEngine::Cohere(engine)
             }
-            EngineType::Codex => unreachable!("Codex handled before path resolution"),
+            EngineType::Codex | EngineType::Groq => {
+                unreachable!("remote engines handled before path resolution")
+            }
         };
 
         // Update the current engine and model ID
@@ -1295,6 +1322,9 @@ impl TranscriptionManager {
                     LoadedEngine::Codex(codex_engine) => codex_engine
                         .transcribe(&audio, &validated_language)
                         .map_err(|e| anyhow::anyhow!("Codex transcription failed: {}", e)),
+                    LoadedEngine::Groq(groq_engine) => groq_engine
+                        .transcribe(&audio, &validated_language)
+                        .map_err(|e| anyhow::anyhow!("Groq transcription failed: {}", e)),
                     LoadedEngine::Parakeet(parakeet_engine) => {
                         let params = ParakeetParams {
                             timestamp_granularity: Some(TimestampGranularity::Segment),

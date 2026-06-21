@@ -562,6 +562,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_experimental_enabled_setting,
             shortcut::change_post_process_base_url_setting,
             shortcut::change_post_process_api_key_setting,
+            shortcut::change_remote_api_key_setting,
             shortcut::change_post_process_model_setting,
             shortcut::set_post_process_provider,
             shortcut::fetch_post_process_models,
