@@ -733,6 +733,7 @@ Section Install
 
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
+  File "${MAINBINARYSRCPATH}\..\DirectML.dll"
 
   ; Copy resources
   {{#each resources_dirs}}
@@ -886,6 +887,7 @@ Section Uninstall
   ; Delete the app directory and its content from disk
   ; Copy main executable
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"
+  Delete "$INSTDIR\DirectML.dll"
 
   ; Delete resources
   {{#each resources}}
