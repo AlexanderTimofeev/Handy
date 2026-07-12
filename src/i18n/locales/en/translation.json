@@ -179,6 +179,10 @@
           "transcribe_with_post_process": {
             "name": "Post-Processing Hotkey",
             "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
+          },
+          "paste_last_transcript": {
+            "name": "Paste Last Transcription",
+            "description": "The keyboard shortcut to paste the most recent transcription into the focused app."
           }
         },
         "errors": {
