@@ -1,10 +1,12 @@
 use crate::managers::audio::AudioRecordingManager;
+use crate::managers::history::HistoryManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::shortcut;
 use crate::TranscriptionCoordinator;
-use log::info;
+use log::{error, info};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager};
 
 // Re-export all utility modules for easy access
 // pub use crate::audio_feedback::*;
@@ -17,29 +19,57 @@ pub use crate::tray::*;
 pub fn cancel_current_operation(app: &AppHandle) {
     info!("Initiating operation cancellation...");
 
-    // Unregister the cancel shortcut asynchronously
     shortcut::unregister_cancel_shortcut(app);
 
-    // Cancel any ongoing recording
+    // Signal the remote request layer so any active cloud transcription exits.
+    crate::managers::remote::cancel_active_requests();
+
+    // Cancel recording and invalidate output from the current pipeline. This
+    // prevents a result that finishes after cancellation from being pasted.
     let audio_manager = app.state::<Arc<AudioRecordingManager>>();
     let recording_was_active = audio_manager.is_recording();
     audio_manager.cancel_recording();
 
-    // Abandon any live streaming transcription
     let tm = app.state::<Arc<TranscriptionManager>>();
     tm.cancel_stream();
 
-    // Update tray icon and hide overlay
     change_tray_icon(app, crate::tray::TrayIconState::Idle);
     hide_recording_overlay(app);
 
-    // Unload model if immediate unload is enabled
     tm.maybe_unload_immediately("cancellation");
 
-    // Notify coordinator so it can keep lifecycle state coherent.
     if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
         coordinator.notify_cancel(recording_was_active);
     }
+
+    // A WAV may already have been written even though a cancelled pipeline
+    // deliberately skips normal history persistence. Recover it shortly after
+    // cancellation so it can be retried with the currently selected model.
+    let history_manager = Arc::clone(&app.state::<Arc<HistoryManager>>());
+    let app_for_recovery = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(750)).await;
+        match crate::managers::history_recovery::recover_orphaned_recordings(
+            history_manager,
+            Duration::from_secs(0),
+        )
+        .await
+        {
+            Ok(recovered) if recovered > 0 => {
+                info!(
+                    "Recovered {} cancelled recording(s) into transcription history",
+                    recovered
+                );
+                let _ = app_for_recovery.emit(
+                    "transcription-error",
+                    "Transcription cancelled. The recording was saved in History and can be retried."
+                        .to_string(),
+                );
+            }
+            Ok(_) => {}
+            Err(err) => error!("Failed to recover cancelled recording into History: {}", err),
+        }
+    });
 
     info!("Operation cancellation completed - returned to idle state");
 }

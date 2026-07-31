@@ -9,12 +9,54 @@ use anyhow::{anyhow, Result};
 use log::debug;
 use serde::Deserialize;
 use std::io::{Cursor, Write};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const CONNECT_TIMEOUT_SECS: u64 = 5;
+const REQUEST_TIMEOUT_SECS: u64 = 45;
+const RETRY_DELAY: Duration = Duration::from_millis(500);
+const CHILD_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const MAX_ATTEMPTS: usize = 2;
+
+/// Incrementing generation used to cancel currently running remote requests.
+/// A generation avoids a stale cancellation affecting the next transcription.
+static REMOTE_CANCEL_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Deserialize)]
 struct TranscribeResponse {
     text: String,
+}
+
+enum AttemptOutcome {
+    Success(String),
+    Retryable(anyhow::Error),
+    Fatal(anyhow::Error),
+    Cancelled,
+}
+
+enum WaitOutcome {
+    Output(Output),
+    Cancelled,
+    TimedOut,
+    Failed(anyhow::Error),
+}
+
+/// Cancel all currently running cloud transcription requests.
+///
+/// Handy only runs one normal transcription pipeline at a time, but using a
+/// generation keeps this safe if a history retry happens to overlap.
+pub fn cancel_active_requests() {
+    REMOTE_CANCEL_GENERATION.fetch_add(1, Ordering::AcqRel);
+}
+
+fn cancellation_generation() -> u64 {
+    REMOTE_CANCEL_GENERATION.load(Ordering::Acquire)
+}
+
+fn was_cancelled_since(generation: u64) -> bool {
+    REMOTE_CANCEL_GENERATION.load(Ordering::Acquire) != generation
 }
 
 /// Map Handy's selected language to an API `language` parameter.
@@ -76,7 +118,11 @@ fn build_curl_config(
         cfg.push_str(&format!("form = \"{}={}\"\n", name, value));
     }
     // HTTP/1.1 + curl's TLS handshake is what passes Cloudflare here.
+    // A short connect timeout catches a dead proxy/network quickly. The full
+    // request timeout still leaves enough time to upload and process long audio.
     cfg.push_str("http1.1\nsilent\nshow-error\n");
+    cfg.push_str(&format!("connect-timeout = {}\n", CONNECT_TIMEOUT_SECS));
+    cfg.push_str(&format!("max-time = {}\n", REQUEST_TIMEOUT_SECS));
     cfg.push_str("write-out = \"\\n%{http_code}\"\n");
     cfg
 }
@@ -89,6 +135,170 @@ fn split_response(stdout: &str) -> (&str, &str) {
         Some(idx) => (trimmed[..idx].trim_end(), trimmed[idx + 1..].trim()),
         None => ("", trimmed.trim()),
     }
+}
+
+fn is_retryable_http_status(code: &str) -> bool {
+    matches!(code, "408" | "425" | "429")
+        || code
+            .parse::<u16>()
+            .map(|status| (500..=599).contains(&status))
+            .unwrap_or(false)
+}
+
+fn wait_for_child(mut child: Child, generation: u64) -> WaitOutcome {
+    let started = Instant::now();
+    // curl has its own max-time. This slightly larger guard also protects us if
+    // a platform-specific curl build fails to honour the config option.
+    let hard_limit = Duration::from_secs(REQUEST_TIMEOUT_SECS + 5);
+
+    loop {
+        if was_cancelled_since(generation) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return WaitOutcome::Cancelled;
+        }
+
+        if started.elapsed() >= hard_limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            return WaitOutcome::TimedOut;
+        }
+
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return match child.wait_with_output() {
+                    Ok(output) => WaitOutcome::Output(output),
+                    Err(err) => WaitOutcome::Failed(anyhow!(
+                        "Failed to collect curl output: {}",
+                        err
+                    )),
+                };
+            }
+            Ok(None) => thread::sleep(CHILD_POLL_INTERVAL),
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return WaitOutcome::Failed(anyhow!("Failed to poll curl process: {}", err));
+            }
+        }
+    }
+}
+
+fn run_attempt(config: &str, generation: u64) -> AttemptOutcome {
+    if was_cancelled_since(generation) {
+        return AttemptOutcome::Cancelled;
+    }
+
+    let mut command = Command::new("curl");
+    command
+        .arg("-K")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    // Hide the curl console window on Windows. Without CREATE_NO_WINDOW a
+    // console flashes on every transcription and steals focus from the app
+    // the user is dictating into.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            return AttemptOutcome::Fatal(anyhow!(
+                "Failed to run curl (is it installed?): {}",
+                err
+            ))
+        }
+    };
+
+    let write_result = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("Failed to open curl stdin"))
+        .and_then(|mut stdin| {
+            stdin
+                .write_all(config.as_bytes())
+                .map_err(|err| anyhow!("Failed to configure curl request: {}", err))
+        });
+
+    if let Err(err) = write_result {
+        let _ = child.kill();
+        let _ = child.wait();
+        return AttemptOutcome::Retryable(err);
+    }
+
+    let attempt_started = Instant::now();
+    let output = match wait_for_child(child, generation) {
+        WaitOutcome::Output(output) => output,
+        WaitOutcome::Cancelled => return AttemptOutcome::Cancelled,
+        WaitOutcome::TimedOut => {
+            return AttemptOutcome::Fatal(anyhow!(
+                "Transcription request timed out after {} seconds",
+                REQUEST_TIMEOUT_SECS
+            ))
+        }
+        WaitOutcome::Failed(err) => return AttemptOutcome::Retryable(err),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let (body, code) = split_response(&stdout);
+
+    if code != "200" {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = if body.is_empty() {
+            stderr.trim().to_string()
+        } else {
+            body.chars().take(300).collect()
+        };
+        let display_code = if code.is_empty() { "(no status)" } else { code };
+        let err = anyhow!(
+            "Transcription request failed: HTTP {} - {}",
+            display_code,
+            detail
+        );
+
+        // HTTP 408/425/429/5xx are explicitly transient. A missing/000 status
+        // is retried only when it failed near the short connect-timeout; a full
+        // request timeout is not repeated and therefore cannot block for 90s.
+        let failed_during_connect = (code.is_empty() || code == "000")
+            && attempt_started.elapsed()
+                <= Duration::from_secs(CONNECT_TIMEOUT_SECS.saturating_add(5));
+        if is_retryable_http_status(code) || failed_during_connect {
+            return AttemptOutcome::Retryable(err);
+        }
+        return AttemptOutcome::Fatal(err);
+    }
+
+    let parsed: TranscribeResponse = match serde_json::from_str(body) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            return AttemptOutcome::Fatal(anyhow!(
+                "Failed to parse transcription response: {} (body: {})",
+                err,
+                body.chars().take(200).collect::<String>()
+            ))
+        }
+    };
+
+    AttemptOutcome::Success(parsed.text)
+}
+
+fn sleep_before_retry(generation: u64) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < RETRY_DELAY {
+        if was_cancelled_since(generation) {
+            return false;
+        }
+        let remaining = RETRY_DELAY.saturating_sub(started.elapsed());
+        thread::sleep(remaining.min(CHILD_POLL_INTERVAL));
+    }
+    true
 }
 
 /// POST a multipart transcription request and return the parsed `text`.
@@ -123,62 +333,33 @@ pub fn curl_transcribe(
 
     let wav_arg = wav_path.to_string_lossy().replace('\\', "/");
     let config = build_curl_config(url, bearer, extra_headers, form_fields, &wav_arg);
+    let generation = cancellation_generation();
 
     let result = (|| -> Result<String> {
-        let mut command = Command::new("curl");
-        command
-            .arg("-K")
-            .arg("-")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        // Hide the curl console window on Windows. Without CREATE_NO_WINDOW a
-        // console flashes on every transcription and steals focus from the app
-        // the user is dictating into.
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
+        for attempt in 0..MAX_ATTEMPTS {
+            match run_attempt(&config, generation) {
+                AttemptOutcome::Success(text) => return Ok(text),
+                AttemptOutcome::Cancelled => {
+                    return Err(anyhow!("Transcription request cancelled"))
+                }
+                AttemptOutcome::Fatal(err) => return Err(err),
+                AttemptOutcome::Retryable(err) => {
+                    if attempt + 1 >= MAX_ATTEMPTS {
+                        return Err(err);
+                    }
+                    debug!(
+                        "Remote transcription attempt {} failed transiently: {}. Retrying once...",
+                        attempt + 1,
+                        err
+                    );
+                    if !sleep_before_retry(generation) {
+                        return Err(anyhow!("Transcription request cancelled"));
+                    }
+                }
+            }
         }
 
-        let mut child = command
-            .spawn()
-            .map_err(|e| anyhow!("Failed to run curl (is it installed?): {}", e))?;
-
-        child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open curl stdin"))?
-            .write_all(config.as_bytes())?;
-
-        let output = child.wait_with_output()?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let (body, code) = split_response(&stdout);
-
-        if code != "200" {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let detail = if body.is_empty() {
-                stderr.trim().to_string()
-            } else {
-                body.chars().take(300).collect()
-            };
-            return Err(anyhow!(
-                "Transcription request failed: HTTP {} - {}",
-                if code.is_empty() { "(no status)" } else { code },
-                detail
-            ));
-        }
-
-        let parsed: TranscribeResponse = serde_json::from_str(body).map_err(|e| {
-            anyhow!(
-                "Failed to parse transcription response: {} (body: {})",
-                e,
-                body.chars().take(200).collect::<String>()
-            )
-        })?;
-        Ok(parsed.text)
+        Err(anyhow!("Remote transcription failed without a result"))
     })();
 
     let _ = std::fs::remove_file(&wav_path);
@@ -241,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn build_curl_config_includes_auth_headers_and_form() {
+    fn build_curl_config_includes_auth_headers_form_and_timeouts() {
         let cfg = build_curl_config(
             "https://api.example.com/transcribe",
             "TOK",
@@ -254,6 +435,18 @@ mod tests {
         assert!(cfg.contains("header = \"originator: codex_desktop\""));
         assert!(cfg.contains("form = \"file=@C:/tmp/handy.wav;type=audio/wav;filename=handy.wav\""));
         assert!(cfg.contains("form = \"model=whisper-large-v3\""));
+        assert!(cfg.contains("connect-timeout = 5"));
+        assert!(cfg.contains("max-time = 45"));
+    }
+
+    #[test]
+    fn retryable_http_statuses_are_classified() {
+        for status in ["408", "425", "429", "500", "502", "503", "504"] {
+            assert!(is_retryable_http_status(status), "status {status}");
+        }
+        for status in ["200", "400", "401", "403", "404"] {
+            assert!(!is_retryable_http_status(status), "status {status}");
+        }
     }
 
     #[test]
