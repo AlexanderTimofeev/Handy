@@ -59,6 +59,7 @@ const getQuantLabel = (filename: string): string | null => {
 // Reads/writes `remote_api_keys[modelId]`. Clicks are stopped from bubbling so
 // editing the key does not select/activate the surrounding card.
 const RemoteApiKeyInput: React.FC<{ modelId: string }> = ({ modelId }) => {
+  const { t } = useTranslation();
   const { settings, refreshSettings } = useSettings();
   const stored = settings?.remote_api_keys?.[modelId] ?? "";
   const [value, setValue] = useState(stored);
