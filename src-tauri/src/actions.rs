@@ -879,53 +879,6 @@ impl ShortcutAction for CancelAction {
     }
 }
 
-// Paste Last Transcript Action
-struct PasteLastTranscriptAction;
-
-impl ShortcutAction for PasteLastTranscriptAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        let history_manager = app.state::<Arc<HistoryManager>>();
-        let entry = match history_manager.get_latest_completed_entry() {
-            Ok(Some(entry)) => entry,
-            Ok(None) => {
-                warn!("No completed transcription available to paste.");
-                return;
-            }
-            Err(err) => {
-                error!("Failed to fetch last completed transcription entry: {}", err);
-                return;
-            }
-        };
-
-        // Prefer the post-processed text when available, matching the tray copy behavior.
-        let text = entry
-            .post_processed_text
-            .as_deref()
-            .unwrap_or(&entry.transcription_text)
-            .to_string();
-
-        if text.trim().is_empty() {
-            warn!("Last completed transcription is empty; skipping paste.");
-            return;
-        }
-
-        let app_clone = app.clone();
-        app.run_on_main_thread(move || {
-            if let Err(e) = utils::paste(text, app_clone.clone()) {
-                error!("Failed to paste last transcription: {}", e);
-                let _ = app_clone.emit("paste-error", ());
-            }
-        })
-        .unwrap_or_else(|e| {
-            error!("Failed to run paste on main thread: {:?}", e);
-        });
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        // Nothing to do on stop for paste last transcript
-    }
-}
-
 // Test Action
 struct TestAction;
 
@@ -965,10 +918,6 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "cancel".to_string(),
         Arc::new(CancelAction) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "paste_last_transcript".to_string(),
-        Arc::new(PasteLastTranscriptAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "test".to_string(),

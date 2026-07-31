@@ -314,6 +314,7 @@ pub fn curl_transcribe(
 ) -> Result<String> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    let generation = cancellation_generation();
     let wav = encode_wav(samples)?;
     debug!(
         "remote transcribe: url={} {} bytes wav, {} form fields",
@@ -333,7 +334,6 @@ pub fn curl_transcribe(
 
     let wav_arg = wav_path.to_string_lossy().replace('\\', "/");
     let config = build_curl_config(url, bearer, extra_headers, form_fields, &wav_arg);
-    let generation = cancellation_generation();
 
     let result = (|| -> Result<String> {
         for attempt in 0..MAX_ATTEMPTS {

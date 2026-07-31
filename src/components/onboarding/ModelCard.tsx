@@ -102,7 +102,7 @@ const RemoteApiKeyInput: React.FC<{ modelId: string }> = ({ modelId }) => {
       {hasKey && !dirty && (
         <span className="flex items-center gap-1 text-xs text-green-500 whitespace-nowrap">
           <Check className="w-3.5 h-3.5" />
-          Saved
+          {t("common.saved", { defaultValue: "Saved" })}
         </span>
       )}
       <Button
@@ -160,12 +160,16 @@ const ModelCard: React.FC<ModelCardProps> = ({
     (state) => state.settings?.debug_mode ?? false,
   );
   const isFeatured = variant === "featured";
-  const isClickable =
-    status === "available" || status === "active" || status === "downloadable";
   // Remote engines (Codex, Groq) have no local file: nothing to download,
-  // size, or delete.
+  // size, or delete. An active remote card remains clickable so the user can
+  // explicitly reload it after changing credentials; active local models keep
+  // the upstream no-op behavior.
   const isRemote =
     model.engine_type === "Codex" || model.engine_type === "Groq";
+  const isClickable =
+    status === "available" ||
+    status === "downloadable" ||
+    (status === "active" && isRemote);
   // Groq models need a user-supplied API key, set per model on the card.
   const needsApiKey = model.engine_type === "Groq";
 
