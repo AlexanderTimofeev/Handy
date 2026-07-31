@@ -1,0 +1,141 @@
+name: Refine upstream port
+
+on:
+  push:
+    branches:
+      - agent/port-custom-providers
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/port-custom-providers
+          fetch-depth: 0
+
+      - name: Remove unrelated changes and adapt remote UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, text):
+              Path(path).write_text(text, encoding='utf-8')
+
+          # Remove the unrelated Paste Last Transcript feature that happened to
+          # share the old custom branch but is outside this migration's scope.
+          path = 'src-tauri/src/actions.rs'
+          text = read(path)
+          start = text.index('// Paste Last Transcript Action')
+          end = text.index('// Test Action', start)
+          text = text[:start] + text[end:]
+          action_map = '''    map.insert(
+              "paste_last_transcript".to_string(),
+              Arc::new(PasteLastTranscriptAction) as Arc<dyn ShortcutAction>,
+          );
+'''
+          if action_map not in text:
+              raise SystemExit('paste_last_transcript action-map entry not found')
+          text = text.replace(action_map, '', 1)
+          write(path, text)
+
+          path = 'src-tauri/src/settings.rs'
+          text = read(path)
+          binding_block = '''    #[cfg(target_os = "macos")]
+          let default_paste_last_shortcut = "control+option+space";
+          #[cfg(not(target_os = "macos"))]
+          let default_paste_last_shortcut = "ctrl+alt+space";
+
+          bindings.insert(
+              "paste_last_transcript".to_string(),
+              ShortcutBinding {
+                  id: "paste_last_transcript".to_string(),
+                  name: "Paste Last Transcription".to_string(),
+                  description: "Pastes the most recent transcription into the active window."
+                      .to_string(),
+                  default_binding: default_paste_last_shortcut.to_string(),
+                  current_binding: default_paste_last_shortcut.to_string(),
+              },
+          );
+
+'''
+          if binding_block not in text:
+              raise SystemExit('paste_last_transcript settings block not found')
+          text = text.replace(binding_block, '', 1)
+          write(path, text)
+
+          path = 'src/components/settings/general/GeneralSettings.tsx'
+          text = read(path)
+          line = '        <ShortcutInput shortcutId="paste_last_transcript" grouped={true} />\n'
+          if line not in text:
+              raise SystemExit('paste_last_transcript settings UI line not found')
+          write(path, text.replace(line, '', 1))
+
+          # Keep active remote cards clickable for an explicit reload after key
+          # changes, without restoring reload-on-click for active local models.
+          path = 'src/components/onboarding/ModelCard.tsx'
+          text = read(path)
+          old = '''  const isClickable =
+            status === "available" || status === "active" || status === "downloadable";
+          // Remote engines (Codex, Groq) have no local file: nothing to download,
+          // size, or delete.
+          const isRemote =
+            model.engine_type === "Codex" || model.engine_type === "Groq";
+'''
+          new = '''  // Remote engines (Codex, Groq) have no local file: nothing to download,
+          // size, or delete. An active remote card remains clickable so the user can
+          // explicitly reload it after changing credentials; active local models keep
+          // the upstream no-op behavior.
+          const isRemote =
+            model.engine_type === "Codex" || model.engine_type === "Groq";
+          const isClickable =
+            status === "available" ||
+            status === "downloadable" ||
+            (status === "active" && isRemote);
+'''
+          if old not in text:
+              raise SystemExit('ModelCard clickability block not found')
+          text = text.replace(old, new, 1)
+          text = text.replace(
+              '          Saved\n',
+              '          {t("common.saved", { defaultValue: "Saved" })}\n',
+              1,
+          )
+          write(path, text)
+
+          # Capture the cancellation generation before WAV encoding/temp-file IO,
+          # so a cancel arriving during preparation cannot be missed.
+          path = 'src-tauri/src/managers/remote.rs'
+          text = read(path)
+          anchor = '    static COUNTER: AtomicU64 = AtomicU64::new(0);\n\n    let wav = encode_wav(samples)?;'
+          replacement = '    static COUNTER: AtomicU64 = AtomicU64::new(0);\n\n    let generation = cancellation_generation();\n    let wav = encode_wav(samples)?;'
+          if anchor not in text:
+              raise SystemExit('remote cancellation insertion point not found')
+          text = text.replace(anchor, replacement, 1)
+          later = '    let config = build_curl_config(url, bearer, extra_headers, form_fields, &wav_arg);\n    let generation = cancellation_generation();\n'
+          if later not in text:
+              raise SystemExit('old remote cancellation capture not found')
+          text = text.replace(
+              later,
+              '    let config = build_curl_config(url, bearer, extra_headers, form_fields, &wav_arg);\n',
+              1,
+          )
+          write(path, text)
+          PY
+
+          rm -f .github/workflows/refine-upstream-port.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: narrow and harden upstream provider port"
+          git push origin HEAD:agent/port-custom-providers
