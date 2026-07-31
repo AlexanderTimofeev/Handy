@@ -90,7 +90,10 @@ pub async fn recover_orphaned_recordings(
                 continue;
             }
             Err(err) => {
-                warn!("Skipping unreadable orphan recording {}: {}", file_name, err);
+                warn!(
+                    "Skipping unreadable orphan recording {}: {}",
+                    file_name, err
+                );
                 continue;
             }
         }

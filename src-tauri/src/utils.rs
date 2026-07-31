@@ -126,7 +126,10 @@ pub fn cancel_current_operation(app: &AppHandle) {
                 );
             }
             Ok(_) => {}
-            Err(err) => error!("Failed to recover cancelled recording into History: {}", err),
+            Err(err) => error!(
+                "Failed to recover cancelled recording into History: {}",
+                err
+            ),
         }
     });
 

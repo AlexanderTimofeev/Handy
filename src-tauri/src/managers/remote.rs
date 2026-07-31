@@ -168,10 +168,9 @@ fn wait_for_child(mut child: Child, generation: u64) -> WaitOutcome {
             Ok(Some(_)) => {
                 return match child.wait_with_output() {
                     Ok(output) => WaitOutcome::Output(output),
-                    Err(err) => WaitOutcome::Failed(anyhow!(
-                        "Failed to collect curl output: {}",
-                        err
-                    )),
+                    Err(err) => {
+                        WaitOutcome::Failed(anyhow!("Failed to collect curl output: {}", err))
+                    }
                 };
             }
             Ok(None) => thread::sleep(CHILD_POLL_INTERVAL),
@@ -210,10 +209,7 @@ fn run_attempt(config: &str, generation: u64) -> AttemptOutcome {
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(err) => {
-            return AttemptOutcome::Fatal(anyhow!(
-                "Failed to run curl (is it installed?): {}",
-                err
-            ))
+            return AttemptOutcome::Fatal(anyhow!("Failed to run curl (is it installed?): {}", err))
         }
     };
 

@@ -25,7 +25,10 @@ pub async fn get_history_entries(
     )
     .await
     {
-        warn!("Failed to recover orphan recordings while opening History: {}", err);
+        warn!(
+            "Failed to recover orphan recordings while opening History: {}",
+            err
+        );
     }
 
     history_manager
