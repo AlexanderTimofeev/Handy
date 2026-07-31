@@ -1,0 +1,54 @@
+name: Fix remote translation hook
+
+on:
+  pull_request:
+    branches:
+      - integration/upstream-0.9.4
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target port branch
+        uses: actions/checkout@v5
+        with:
+          ref: agent/port-custom-providers
+          fetch-depth: 0
+
+      - name: Add component-local translation hook
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/components/onboarding/ModelCard.tsx')
+          text = path.read_text(encoding='utf-8')
+          old = '''const RemoteApiKeyInput: React.FC<{ modelId: string }> = ({ modelId }) => {
+            const { settings, refreshSettings } = useSettings();
+'''
+          new = '''const RemoteApiKeyInput: React.FC<{ modelId: string }> = ({ modelId }) => {
+            const { t } = useTranslation();
+            const { settings, refreshSettings } = useSettings();
+'''
+
+          if new not in text:
+            if old not in text:
+              raise SystemExit('RemoteApiKeyInput insertion point not found')
+            text = text.replace(old, new, 1)
+            path.write_text(text, encoding='utf-8')
+          PY
+
+          bun install --frozen-lockfile
+          bun x prettier --write src/components/onboarding/ModelCard.tsx
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/onboarding/ModelCard.tsx
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: scope translation hook to remote API editor"
+            git push origin HEAD:agent/port-custom-providers
+          fi
