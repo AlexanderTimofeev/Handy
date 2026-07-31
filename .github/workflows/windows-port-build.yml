@@ -9,7 +9,46 @@ permissions:
   contents: write
 
 jobs:
+  prepare-target:
+    runs-on: ubuntu-latest
+    outputs:
+      target-sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - name: Checkout target port branch
+        uses: actions/checkout@v5
+        with:
+          ref: agent/port-custom-providers
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Apply and format current refinement
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin agent/upstream-port
+          git show origin/agent/upstream-port:scripts/refine-upstream-port.py > /tmp/refine-upstream-port.py
+          python /tmp/refine-upstream-port.py
+          bun install --frozen-lockfile
+          bun x prettier --write src/components/onboarding/ModelCard.tsx
+          (cd src-tauri && cargo fmt)
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: finalize upstream provider port"
+            git push origin HEAD:agent/port-custom-providers
+          fi
+
+      - name: Record exact target SHA
+        id: target
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   windows-x64:
+    needs: prepare-target
     uses: ./.github/workflows/build.yml
     with:
       platform: windows-latest
@@ -17,7 +56,7 @@ jobs:
       upload-artifacts: true
       sign-binaries: false
       repository: AlexanderTimofeev/Handy
-      ref: agent/port-custom-providers
+      ref: ${{ needs.prepare-target.outputs.target-sha }}
       is-debug-build: false
       no-cache: false
     secrets: inherit
