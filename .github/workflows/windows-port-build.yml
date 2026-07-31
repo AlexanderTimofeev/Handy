@@ -1,0 +1,23 @@
+name: Build upstream port for Windows
+
+on:
+  pull_request:
+    branches:
+      - integration/upstream-0.9.4
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    uses: ./.github/workflows/build.yml
+    with:
+      platform: windows-latest
+      target: x86_64-pc-windows-msvc
+      upload-artifacts: true
+      sign-binaries: false
+      repository: AlexanderTimofeev/Handy
+      ref: agent/port-custom-providers
+      is-debug-build: false
+      no-cache: false
+    secrets: inherit
