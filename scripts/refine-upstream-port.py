@@ -97,6 +97,25 @@ if hook_new not in text:
     if hook_old not in text:
         raise RuntimeError("RemoteApiKeyInput translation-hook insertion point not found")
     text = text.replace(hook_old, hook_new, 1)
+
+# tauri-specta commands return a Result object for serialized command errors;
+# awaiting alone is not enough to enter catch.
+save_old = '''      await commands.changeRemoteApiKeySetting(modelId, value.trim());
+      await refreshSettings();
+'''
+save_new = '''      const result = await commands.changeRemoteApiKeySetting(
+        modelId,
+        value.trim(),
+      );
+      if (result.status === "error") {
+        throw new Error(result.error);
+      }
+      await refreshSettings();
+'''
+if save_new not in text:
+    if save_old not in text:
+        raise RuntimeError("Remote API key save call not found")
+    text = text.replace(save_old, save_new, 1)
 write(path, text)
 
 # Capture the cancellation generation before preparing the WAV/temp file.
