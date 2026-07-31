@@ -84,6 +84,19 @@ text = text.replace(
     '          {t("common.saved", { defaultValue: "Saved" })}\n',
     1,
 )
+
+# RemoteApiKeyInput is a separate React component, so it needs its own hook.
+hook_old = '''const RemoteApiKeyInput: React.FC<{ modelId: string }> = ({ modelId }) => {
+  const { settings, refreshSettings } = useSettings();
+'''
+hook_new = '''const RemoteApiKeyInput: React.FC<{ modelId: string }> = ({ modelId }) => {
+  const { t } = useTranslation();
+  const { settings, refreshSettings } = useSettings();
+'''
+if hook_new not in text:
+    if hook_old not in text:
+        raise RuntimeError("RemoteApiKeyInput translation-hook insertion point not found")
+    text = text.replace(hook_old, hook_new, 1)
 write(path, text)
 
 # Capture the cancellation generation before preparing the WAV/temp file.
