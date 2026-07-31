@@ -76,7 +76,13 @@ const RemoteApiKeyInput: React.FC<{ modelId: string }> = ({ modelId }) => {
     e.stopPropagation();
     setSaving(true);
     try {
-      await commands.changeRemoteApiKeySetting(modelId, value.trim());
+      const result = await commands.changeRemoteApiKeySetting(
+        modelId,
+        value.trim(),
+      );
+      if (result.status === "error") {
+        throw new Error(result.error);
+      }
       await refreshSettings();
     } catch (err) {
       console.error(`Failed to save API key for ${modelId}:`, err);
