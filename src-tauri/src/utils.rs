@@ -94,9 +94,10 @@ pub fn cancel_current_operation(app: &AppHandle) {
     let recording_was_active = audio_manager.is_recording();
     audio_manager.cancel_recording();
 
-    // Abandon any live streaming transcription
+    // Abandon any live streaming transcription and abort any in-flight remote request.
     let tm = app.state::<Arc<TranscriptionManager>>();
     tm.cancel_stream();
+    crate::managers::remote::cancel_active_requests();
 
     // Update tray icon and hide overlay
     set_tray_state(app, crate::tray::TrayIconState::Idle);
@@ -168,6 +169,23 @@ pub fn env_flag_enabled(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancel_current_operation_cancels_remote_requests_contract() {
+        let source = include_str!("utils.rs");
+        let function = source
+            .split("pub fn cancel_current_operation")
+            .nth(1)
+            .expect("cancel_current_operation must exist")
+            .split("/// Check if using the Wayland display server protocol")
+            .next()
+            .expect("cancel_current_operation must end before Wayland helpers");
+
+        assert!(
+            function.contains("crate::managers::remote::cancel_active_requests();"),
+            "cancelling the current operation must abort in-flight remote transcription requests"
+        );
+    }
 
     #[test]
     fn arm64_native_machine_is_the_only_match() {
