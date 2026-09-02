@@ -160,6 +160,7 @@ export const supportsLanguageCode = (
   supportedLanguages: string[],
   languageCode: string,
 ): boolean => {
+  if (supportedLanguages.length === 0) return true;
   const recognitionCode = recognitionLanguage(languageCode);
   return supportedLanguages.some(
     (supportedLanguage) =>
