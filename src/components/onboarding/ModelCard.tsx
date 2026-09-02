@@ -1,5 +1,7 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { commands } from "@/bindings";
+import { useSettings } from "@/hooks/useSettings";
 import {
   AudioLines,
   Check,
@@ -53,6 +55,75 @@ const getQuantLabel = (filename: string): string | null => {
   return match ? match[1].toUpperCase() : null;
 };
 
+// Per-model API key editor for remote models that need one (e.g. Groq).
+// Reads/writes `remote_api_keys[modelId]`. Clicks are stopped from bubbling so
+// editing the key does not select/activate the surrounding card.
+const RemoteApiKeyInput: React.FC<{ modelId: string }> = ({ modelId }) => {
+  const { t } = useTranslation();
+  const { settings, refreshSettings } = useSettings();
+  const stored = settings?.remote_api_keys?.[modelId] ?? "";
+  const [value, setValue] = useState(stored);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setValue(stored);
+  }, [stored]);
+
+  const dirty = value.trim() !== stored;
+  const hasKey = stored.length > 0;
+
+  const handleSave = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSaving(true);
+    try {
+      const result = await commands.changeRemoteApiKeySetting(
+        modelId,
+        value.trim(),
+      );
+      if (result.status === "error") {
+        throw new Error(result.error);
+      }
+      await refreshSettings();
+    } catch (err) {
+      console.error(`Failed to save API key for ${modelId}:`, err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="flex items-center gap-2 w-full mt-1"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <input
+        type="password"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="API key"
+        autoComplete="off"
+        spellCheck={false}
+        className="flex-1 min-w-0 px-2 py-1 text-xs bg-mid-gray/10 border border-mid-gray/40 rounded-md focus:outline-none focus:ring-1 focus:ring-logo-primary"
+      />
+      {hasKey && !dirty && (
+        <span className="flex items-center gap-1 text-xs text-green-500 whitespace-nowrap">
+          <Check className="w-3.5 h-3.5" />
+          {t("common.saved", { defaultValue: "Saved" })}
+        </span>
+      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={handleSave}
+        disabled={!dirty || saving}
+      >
+        {saving ? "Saving…" : "Save"}
+      </Button>
+    </div>
+  );
+};
+
 export type ModelCardStatus =
   | "downloadable"
   | "downloading"
@@ -96,15 +167,27 @@ const ModelCard: React.FC<ModelCardProps> = ({
     (state) => state.settings?.debug_mode ?? false,
   );
   const isFeatured = variant === "featured";
-  // The active model is already loaded — re-selecting it just reloads it for no
-  // gain, so it is deliberately not clickable.
-  const isClickable = status === "available" || status === "downloadable";
+  // Remote engines (Codex, Groq) have no local file: nothing to download,
+  // size, or delete. An active remote card remains clickable so the user can
+  // explicitly reload it after changing credentials; active local models keep
+  // the upstream no-op behavior.
+  const isRemote =
+    model.engine_type === "Codex" || model.engine_type === "Groq";
+  const isClickable =
+    status === "available" ||
+    status === "downloadable" ||
+    (status === "active" && isRemote);
+  // Groq models need a user-supplied API key, set per model on the card.
+  const needsApiKey = model.engine_type === "Groq";
 
   // Get translated model name and description
   const displayName = getTranslatedModelName(model, t);
   const displayDescription = getTranslatedModelDescription(model, t);
   const showModelSize =
-    status === "downloadable" || status === "available" || status === "active";
+    !isRemote &&
+    (status === "downloadable" ||
+      status === "available" ||
+      status === "active");
   const formattedModelSize = formatModelSize(Number(model.size_mb));
   const quantLabel = getQuantLabel(model.filename);
   const capabilityLanguages = getUniqueCapabilityLanguages(
@@ -274,19 +357,24 @@ const ModelCard: React.FC<ModelCardProps> = ({
             )}
           </span>
         )}
-        {onDelete && (status === "available" || status === "active") && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleDelete}
-            title={t("modelSelector.deleteModel", { modelName: displayName })}
-            className="flex items-center gap-1.5 text-logo-primary/85 hover:text-logo-primary hover:bg-logo-primary/10"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>{t("common.delete")}</span>
-          </Button>
-        )}
+        {onDelete &&
+          !isRemote &&
+          (status === "available" || status === "active") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDelete}
+              title={t("modelSelector.deleteModel", { modelName: displayName })}
+              className="flex items-center gap-1.5 text-logo-primary/85 hover:text-logo-primary hover:bg-logo-primary/10"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{t("common.delete")}</span>
+            </Button>
+          )}
       </div>
+
+      {/* Per-model API key (Groq) */}
+      {needsApiKey && <RemoteApiKeyInput modelId={model.id} />}
 
       {/* Download/extract progress */}
       {status === "downloading" && downloadProgress !== undefined && (

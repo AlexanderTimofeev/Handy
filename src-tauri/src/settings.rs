@@ -451,6 +451,10 @@ pub struct AppSettings {
     pub post_process_providers: Vec<PostProcessProvider>,
     #[serde(default = "default_post_process_api_keys")]
     pub post_process_api_keys: SecretMap,
+    /// API keys for remote transcription models, keyed by model id (e.g.
+    /// `groq-whisper-large-v3`). Each remote model stores its key independently.
+    #[serde(default = "default_remote_api_keys")]
+    pub remote_api_keys: SecretMap,
     #[serde(default = "default_post_process_models")]
     pub post_process_models: HashMap<String, String>,
     #[serde(default = "default_post_process_prompts")]
@@ -746,6 +750,11 @@ fn default_post_process_api_keys() -> SecretMap {
     SecretMap(map)
 }
 
+fn default_remote_api_keys() -> SecretMap {
+    // Filled on demand as the user sets a key for a remote model.
+    SecretMap(HashMap::new())
+}
+
 fn default_model_for_provider(provider_id: &str) -> String {
     if provider_id == APPLE_INTELLIGENCE_PROVIDER_ID {
         return APPLE_INTELLIGENCE_DEFAULT_MODEL_ID.to_string();
@@ -906,7 +915,6 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: "escape".to_string(),
         },
     );
-
     AppSettings {
         settings_schema_version: default_settings_schema_version(),
         bindings,
@@ -945,6 +953,7 @@ pub fn get_default_settings() -> AppSettings {
         post_process_provider_id: default_post_process_provider_id(),
         post_process_providers: default_post_process_providers(),
         post_process_api_keys: default_post_process_api_keys(),
+        remote_api_keys: default_remote_api_keys(),
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: None,

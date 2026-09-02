@@ -3,7 +3,9 @@ use crate::managers::{
     history::{HistoryManager, PaginatedHistory},
     transcription::TranscriptionManager,
 };
+use log::warn;
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, State};
 
 #[tauri::command]
@@ -14,6 +16,21 @@ pub async fn get_history_entries(
     cursor: Option<i64>,
     limit: Option<usize>,
 ) -> Result<PaginatedHistory, String> {
+    // Repair WAVs left without a database row by a previous crash, timeout, or
+    // cancellation. Ignore very recent files so an in-flight transcription is
+    // not mistaken for an orphan when History is opened at the same time.
+    if let Err(err) = crate::managers::history_recovery::recover_orphaned_recordings(
+        Arc::clone(&history_manager),
+        Duration::from_secs(120),
+    )
+    .await
+    {
+        warn!(
+            "Failed to recover orphan recordings while opening History: {}",
+            err
+        );
+    }
+
     history_manager
         .get_history_entries(cursor, limit)
         .await
@@ -81,6 +98,16 @@ pub async fn retry_history_entry_transcription(
         return Err("Recording has no audio samples".to_string());
     }
 
+    // Retry deliberately follows the model/provider selected *now*, not the one
+    // used by the original failed attempt. Explicitly discard a cached engine
+    // that does not match settings; this also covers the "Immediately" unload
+    // mode where a selection can be persisted without eager loading.
+    let selected_model = crate::settings::get_settings(&app).selected_model;
+    if transcription_manager.get_current_model().as_deref() != Some(selected_model.as_str()) {
+        transcription_manager
+            .unload_model()
+            .map_err(|e| format!("Failed to switch retry model: {}", e))?;
+    }
     transcription_manager.initiate_model_load();
 
     let tm = Arc::clone(&transcription_manager);

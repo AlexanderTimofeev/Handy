@@ -1089,6 +1089,21 @@ pub fn change_post_process_api_key_setting(
     Ok(())
 }
 
+/// Set the API key for a remote transcription model (e.g. a Groq model),
+/// keyed by model id. Keys are stored per model.
+#[tauri::command]
+#[specta::specta]
+pub fn change_remote_api_key_setting(
+    app: AppHandle,
+    model_id: String,
+    api_key: String,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.remote_api_keys.insert(model_id, api_key);
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_post_process_model_setting(
