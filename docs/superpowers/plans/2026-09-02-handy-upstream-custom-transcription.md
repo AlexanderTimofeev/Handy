@@ -26,6 +26,7 @@
 ### Task 1: Integrate the mature custom line into latest upstream
 
 **Files:**
+
 - Merge/resolve: `src-tauri/src/commands/history.rs`
 - Merge/resolve: `src-tauri/src/lib.rs`
 - Add/resolve: `src-tauri/src/managers/codex.rs`
@@ -43,6 +44,7 @@
 - Merge/resolve if still semantically needed: `src/components/ui/Slider.tsx`
 
 **Interfaces:**
+
 - Consumes: current upstream manager/settings/shortcut APIs and the mature custom behavior from `origin/integration/upstream-0.9.4`.
 - Produces: a compiling source tree containing `EngineType::Codex`, `EngineType::Groq`, shared remote request plumbing, provider model catalog entries, per-model remote API key settings, recovery manager registration, retry handling, and paste-last-transcription command/hotkey.
 
@@ -157,6 +159,7 @@ Expected: no unmerged paths.
 ### Task 2: Reconcile provider integration with current upstream and harden only where needed
 
 **Files:**
+
 - Review/modify: `src-tauri/src/managers/codex.rs`
 - Review/modify: `src-tauri/src/managers/groq.rs`
 - Review/modify: `src-tauri/src/managers/remote.rs`
@@ -167,6 +170,7 @@ Expected: no unmerged paths.
 - Regenerate/modify only through project mechanism if needed: `src/bindings.ts`
 
 **Interfaces:**
+
 - Consumes: merged provider implementation from Task 1 and current upstream transcription lifecycle.
 - Produces: current-architecture provider code with no obsolete duplicate path and no secret exposure.
 
@@ -228,6 +232,7 @@ If review requires no source changes, skip this commit and record that the merge
 ### Task 3: Verify recovery, retry, and shortcut behavior against latest upstream state handling
 
 **Files:**
+
 - Review/modify: `src-tauri/src/managers/history_recovery.rs`
 - Review/modify: `src-tauri/src/commands/history.rs`
 - Review/modify: `src-tauri/src/lib.rs`
@@ -235,6 +240,7 @@ If review requires no source changes, skip this commit and record that the merge
 - Review/modify: `src-tauri/src/shortcut/mod.rs`
 
 **Interfaces:**
+
 - Consumes: latest upstream recording/shortcut coordinator plus the custom recovery and paste-last behavior.
 - Produces: no duplicated shortcut state machine, recoverable failed/cancelled remote recordings, retry through the currently selected model, and a working paste-last action.
 
@@ -271,10 +277,12 @@ If no source changes are needed, skip the commit.
 ### Task 4: Final validation and branch packaging
 
 **Files:**
+
 - Verify all changed files.
 - No new production files unless a validation failure requires a test-driven fix.
 
 **Interfaces:**
+
 - Consumes: Tasks 1-3.
 - Produces: a clean, reviewable branch ready to push/merge into the fork.
 
