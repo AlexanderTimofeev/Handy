@@ -419,6 +419,43 @@ fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String
     }
 }
 
+fn cleanup_final_output(
+    text: &str,
+    patterns: &[String],
+    remove_trailing_period: bool,
+) -> String {
+    let mut cleaned = text.to_string();
+
+    loop {
+        let trimmed = cleaned.trim_end();
+        let mut removed = false;
+        for pattern in patterns {
+            let pattern = pattern.trim();
+            if pattern.is_empty() {
+                continue;
+            }
+            if trimmed.ends_with(pattern) {
+                let new_len = trimmed.len() - pattern.len();
+                cleaned = trimmed[..new_len].trim_end().to_string();
+                removed = true;
+                break;
+            }
+        }
+        if !removed {
+            break;
+        }
+    }
+
+    if remove_trailing_period {
+        let trimmed = cleaned.trim_end();
+        if trimmed.ends_with('.') && !trimmed.ends_with("..") {
+            cleaned = trimmed[..trimmed.len() - 1].trim_end().to_string();
+        }
+    }
+
+    cleaned
+}
+
 pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
@@ -455,6 +492,16 @@ pub(crate) async fn process_transcription_output(
             }
         }
     } else if final_text != transcription {
+        post_processed_text = Some(final_text.clone());
+    }
+
+    let cleaned_text = cleanup_final_output(
+        &final_text,
+        &settings.output_cleanup_patterns,
+        settings.remove_trailing_period,
+    );
+    if cleaned_text != final_text {
+        final_text = cleaned_text;
         post_processed_text = Some(final_text.clone());
     }
 
@@ -952,8 +999,8 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 #[cfg(test)]
 mod tests {
     use super::{
-        complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay,
-        strip_think_block,
+        cleanup_final_output, complete_unless_cancelled, is_blank_transcription,
+        should_use_streaming_overlay, strip_think_block,
     };
     use crate::settings::OverlayStyle;
     use std::future;
@@ -1027,6 +1074,46 @@ mod tests {
             strip_think_block("<think>never closed"),
             "<think>never closed"
         );
+    }
+
+    #[test]
+    fn cleanup_removes_configured_suffix_only_at_end() {
+        let patterns = vec!["Garbage footer".to_string()];
+        assert_eq!(
+            cleanup_final_output("Useful text Garbage footer", &patterns, false),
+            "Useful text"
+        );
+        assert_eq!(
+            cleanup_final_output("Garbage footer is legitimate here", &patterns, false),
+            "Garbage footer is legitimate here"
+        );
+    }
+
+    #[test]
+    fn cleanup_removes_chained_suffixes_and_ignores_empty_patterns() {
+        let patterns = vec![
+            "".to_string(),
+            "Second".to_string(),
+            "First".to_string(),
+        ];
+        assert_eq!(
+            cleanup_final_output("Answer First   Second   ", &patterns, false),
+            "Answer"
+        );
+    }
+
+    #[test]
+    fn cleanup_trailing_period_is_optional_and_preserves_ellipsis() {
+        assert_eq!(cleanup_final_output("Answer.   ", &[], true), "Answer");
+        assert_eq!(cleanup_final_output("Answer.", &[], false), "Answer.");
+        assert_eq!(cleanup_final_output("Answer...", &[], true), "Answer...");
+        assert_eq!(cleanup_final_output("Answer!", &[], true), "Answer!");
+        assert_eq!(cleanup_final_output("Answer?", &[], true), "Answer?");
+    }
+
+    #[test]
+    fn cleanup_with_empty_patterns_and_disabled_period_is_unchanged() {
+        assert_eq!(cleanup_final_output("Answer   ", &[], false), "Answer   ");
     }
 
     #[test]

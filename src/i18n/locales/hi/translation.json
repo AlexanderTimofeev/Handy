@@ -398,6 +398,15 @@
       "fillerWordRemoval": {
         "title": "फिलर शब्द हटाएं",
         "description": "ट्रांसक्रिप्शन से आम हिचकिचाहट वाले शब्द हटाता है। उन्हें बनाए रखने के लिए इसे बंद करें।"
+      },
+      "outputCleanupPatterns": {
+        "title": "Remove Output Endings",
+        "description": "Remove known static garbage text when it appears at the end of the final transcription. Enter one literal ending per line.",
+        "placeholder": "One ending per line"
+      },
+      "removeTrailingPeriod": {
+        "title": "Remove Trailing Period",
+        "description": "Remove a single final period from the pasted transcription. Other ending punctuation is kept."
       }
     },
     "postProcessing": {

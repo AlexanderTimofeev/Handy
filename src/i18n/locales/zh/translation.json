@@ -398,6 +398,15 @@
       "fillerWordRemoval": {
         "title": "移除语气词",
         "description": "从转录中移除常见的语气词。关闭此选项即可保留这些词。"
+      },
+      "outputCleanupPatterns": {
+        "title": "Remove Output Endings",
+        "description": "Remove known static garbage text when it appears at the end of the final transcription. Enter one literal ending per line.",
+        "placeholder": "One ending per line"
+      },
+      "removeTrailingPeriod": {
+        "title": "Remove Trailing Period",
+        "description": "Remove a single final period from the pasted transcription. Other ending punctuation is kept."
       }
     },
     "postProcessing": {

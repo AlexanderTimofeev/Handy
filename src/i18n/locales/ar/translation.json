@@ -375,6 +375,15 @@
       "fillerWordRemoval": {
         "title": "إزالة كلمات الحشو",
         "description": "يزيل كلمات التردد الشائعة من النصوص. عطّل هذا الخيار للاحتفاظ بها."
+      },
+      "outputCleanupPatterns": {
+        "title": "Remove Output Endings",
+        "description": "Remove known static garbage text when it appears at the end of the final transcription. Enter one literal ending per line.",
+        "placeholder": "One ending per line"
+      },
+      "removeTrailingPeriod": {
+        "title": "Remove Trailing Period",
+        "description": "Remove a single final period from the pasted transcription. Other ending punctuation is kept."
       }
     },
     "postProcessing": {

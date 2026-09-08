@@ -465,6 +465,13 @@ pub struct AppSettings {
     pub mute_while_recording: bool,
     #[serde(default)]
     pub append_trailing_space: bool,
+    /// Literal suffixes to strip from the final transcription output. Each
+    /// entry is matched only at the end of the text, never in the middle.
+    #[serde(default)]
+    pub output_cleanup_patterns: Vec<String>,
+    /// Remove one final ASCII period from the final transcription output.
+    #[serde(default)]
+    pub remove_trailing_period: bool,
     #[serde(default = "default_app_language")]
     pub app_language: String,
     #[serde(default = "default_theme")]
@@ -959,6 +966,8 @@ pub fn get_default_settings() -> AppSettings {
         post_process_selected_prompt_id: None,
         mute_while_recording: false,
         append_trailing_space: false,
+        output_cleanup_patterns: Vec::new(),
+        remove_trailing_period: false,
         app_language: default_app_language(),
         theme: default_theme(),
         experimental_enabled: false,
